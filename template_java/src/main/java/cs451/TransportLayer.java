@@ -1,90 +1,114 @@
 package cs451;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
 
-public class TransportLayer {
-    static final String ACK = "**ACK**";
-    static final int DELAY = 500;
-
-    GroundLayer groundLayer;
+public class TransportLayer implements Layer {
     HashSet<PacketIdentifier> delivered;
     Set<PacketIdentifier> acknowledged;
     SenderManager senderManager;
+    Layer upperLayer;
 
     int maxSequence;
 
-    TransportLayer(int listeningPort) {
+    TransportLayer() {
         delivered = new HashSet<>();
-        acknowledged = Collections.synchronizedSet(new HashSet<PacketIdentifier>()); // Multithread proof
+        acknowledged = Collections.synchronizedSet(new HashSet<PacketIdentifier>()); // Multi-thread proof
         maxSequence = 0;
-        groundLayer = new GroundLayer(listeningPort);
-        groundLayer.transport = this;
+        GroundLayer.deliverTo(this);
 
         senderManager = new SenderManager();
     }
 
-    public void receive(String sourceHostname, int sourcePort, String rcvdPayload) {
-        PacketParser parser = new PacketParser(sourceHostname, sourcePort, rcvdPayload);
+    public void deliverTo(Layer layer) {
+        this.upperLayer = layer; 
+    }
+
+    public void receive(Host sourceHost, String rcvdPayload) {
+        // Check if ping
+        if (rcvdPayload.contains(Constants.PING)) {
+            PingLayer.handlePing(sourceHost.getIp(), sourceHost.getPort());
+            return;
+        }
+
+        // Otherwise parse packet
+        PacketParser parser = new PacketParser(sourceHost, rcvdPayload);
         PacketIdentifier packetId = parser.getPacketId();
         String rcvdData = parser.getData();
-
-
-        if (ACK.equals(rcvdData)) {
-            // System.out.println("ACK");
+        if (Constants.ACK.equals(rcvdData)) {
             acknowledged.add(packetId);
         }
         else {
-            sendAck(sourceHostname, sourcePort, parser.getSequenceNumber());
+            sendAck(sourceHost, parser.getSequenceNumber());
             if (!delivered.contains(packetId)) {
                 // System.out.println("DELIVERED");
-                System.out.print("" + parser + "\t");
                 delivered.add(packetId);
+                if (upperLayer != null)
+                    upperLayer.receive(sourceHost, rcvdData);
+                else
+                    System.out.print("Transport : " + parser + "\n");
+
             } else {
                 // System.out.println("Already delivered");
             }
         }
     }
 
-    public void send(String destHostname, int destPort, String payload) {
+    public void send(Host destHost, String payload) {
         int sequenceNumber = ++maxSequence;
         String rawPayload = sequenceNumber + ";" + payload;
-        PacketIdentifier packetId = new PacketIdentifier(destHostname, destPort, sequenceNumber);
+        PacketIdentifier packetId = new PacketIdentifier(destHost, sequenceNumber);
 
-        senderManager.schedule(destHostname, destPort, rawPayload, packetId);
+        senderManager.schedule(destHost, rawPayload, packetId);
     }
 
-    public void sendAck(String destHostname, int destPort, int sequenceNumber){
-        String rawPayload = sequenceNumber + ";" + ACK;
-        groundLayer.send(destHostname, destPort, rawPayload);
+    public void sendAck(Host destHost, int sequenceNumber){
+        String rawPayload = sequenceNumber + ";" + Constants.ACK;
+        GroundLayer.send(destHost, rawPayload);
     }
+
+    public void handleCrash(Host crashedHost) {
+        senderManager.cancelMessageTo(crashedHost);
+    }
+
 
     class SenderManager {
         private Timer timer;
-
+        private HashMap<PacketIdentifier, TimerTask> idToTask;
+        
         public SenderManager() {
             this.timer = new Timer();
+            this.idToTask = new HashMap<>();
         }
 
-        public synchronized void schedule(String hostname, int port, String payload, PacketIdentifier packetId) {
+        public synchronized void schedule(Host desHost, String payload, PacketIdentifier packetId) {
             // Define new task
             TimerTask task = new TimerTask() {
                 @Override
                 public void run() {
                     if (acknowledged.contains(packetId)) {
-                        // System.out.println("ACKED : " + packetId);
                         this.cancel();
                     }
                     else{
                         // System.out.println("Sending");
-                        groundLayer.send(hostname, port, payload);
+                        GroundLayer.send(desHost, payload);
                     }
 				}
-			};
-			this.timer.scheduleAtFixedRate(task, 0, DELAY);
-		}
+            };
+            this.idToTask.put(packetId, task);
+			this.timer.scheduleAtFixedRate(task, 0, Constants.DELAY_RETRANSMIT);
+        }
+        
+        public synchronized void cancelMessageTo(Host host){
+            for (PacketIdentifier packetId : idToTask.keySet()){
+                if (packetId.getDest().equals(host)){
+                    idToTask.get(packetId).cancel();
+                }
+            }
+        }
 	}
 }

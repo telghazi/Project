@@ -8,16 +8,16 @@ import java.net.SocketException;
 import java.net.UnknownHostException;
 
 class GroundLayer {
-    TransportLayer transport;
-    Thread thread;
+    static Layer transport;
+    static Thread thread;
 
-    private int listeningPort;
-    private boolean receiving = true;
-    private DatagramSocket socket;
-    private byte[] buf = new byte[256];
+    private static int listeningPort;
+    private static boolean receiving = true;
+    private static DatagramSocket socket;
+    private static byte[] buf = new byte[256];
 
-    GroundLayer(int listeningPort) {
-        this.listeningPort = listeningPort;
+    public static void start(int listeningPort) {
+        GroundLayer.listeningPort = listeningPort;
         try {
             socket = new DatagramSocket(listeningPort);
         } catch (SocketException e) {
@@ -27,12 +27,20 @@ class GroundLayer {
 
         // Start listening thread
         thread = new Thread(() -> {
-            receive();
+            listen();
         });
         thread.start();
     }
 
-    public void receive() {
+    public static void deliverTo(Layer transport) {
+        GroundLayer.transport = transport;
+    }
+
+    public static void receive(Host source, String message) {
+        System.err.println("Incorrect use of GroundLayer");
+    }
+
+    public static void listen() {
         while (receiving) {
             DatagramPacket rcvdPacket = new DatagramPacket(buf, buf.length);
             try {
@@ -46,7 +54,9 @@ class GroundLayer {
             int senderPort = rcvdPacket.getPort();
             String rcvdPayload = new String(rcvdPacket.getData(), 0, rcvdPacket.getLength());
 
-            transport.receive(senderAddress.getHostName(), senderPort, rcvdPayload);
+            String ipAddress = senderAddress.getHostAddress();
+            Host senderHost = HostList.getHost(ipAddress, senderPort);
+            transport.receive(senderHost, rcvdPayload);
 
             if ("**STOP**".equals(rcvdPayload)) {
                 receiving = false;
@@ -55,7 +65,9 @@ class GroundLayer {
         socket.close();
     }
 
-    public void send(String destHost, int destPort, String payload) {
+    public static void send(Host host, String payload) {
+        String destHost = host.getIp();
+        int destPort = host.getPort();
         byte[] buf = payload.getBytes();
         InetAddress address;
         try {
@@ -73,4 +85,7 @@ class GroundLayer {
         }
     }
 
-} 
+    public void handleCrash(Host crashedHost) {
+    }
+    
+}
