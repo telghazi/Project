@@ -44,14 +44,6 @@ public class Parser {
             help();
         }
 
-        if (!barrierParser.populate(args[Constants.BARRIER_KEY], args[Constants.BARRIER_VALUE])) {
-            help();
-        }
-
-        if (!signalParser.populate(args[Constants.SIGNAL_KEY], args[Constants.SIGNAL_VALUE])) {
-            help();
-        }
-
         if (!outputParser.populate(args[Constants.OUTPUT_KEY], args[Constants.OUTPUT_VALUE])) {
             help();
         }
